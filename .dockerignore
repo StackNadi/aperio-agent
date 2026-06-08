@@ -1,0 +1,12 @@
+# .dockerignore
+.env
+.env.keys
+.env.*
+*.env
+!.env.example
+node_modules
+dist
+.git
+*.tar
+*.md
+tests
