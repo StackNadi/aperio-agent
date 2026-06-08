@@ -1,6 +1,14 @@
 # Docker
 
-## Image
+## Pre-built image
+
+```bash
+docker pull ghcr.io/StackNadi/aperio-agent:latest
+```
+
+Available tags: `latest`, `1.0.0`, `1.0`
+
+## Build locally
 
 Build the production image from the repository root:
 
@@ -8,7 +16,7 @@ Build the production image from the repository root:
 docker build -t aperio-agent:latest .
 ```
 
-Run the app container:
+Run the container:
 
 ```bash
 docker run --rm \
@@ -64,7 +72,7 @@ docker compose -f docker-compose.prod.yml up -d
 Use a registry image by setting `APERIO_IMAGE`:
 
 ```bash
-APERIO_IMAGE=ghcr.io/owner/aperio-agent:tag docker compose -f docker-compose.prod.yml up -d
+APERIO_IMAGE=ghcr.io/StackNadi/aperio-agent:latest docker compose -f docker-compose.prod.yml up -d
 ```
 
 The production Compose file starts the app image and maps `${HOST_PORT:-3000}:3000`.
@@ -91,28 +99,12 @@ Stop the production stack:
 docker compose -f docker-compose.prod.yml down
 ```
 
-## Environment variables
+## Configuration
 
-Required:
+Copy `.env.example` to `.env.production` and fill in the required values. All available variables and their defaults are documented in that file.
 
-- `GITHUB_APP_ID`
-- `GITHUB_PRIVATE_KEY`
-- `GITHUB_WEBHOOK_SECRET`
-- `AI_BASE_URL`
-- `AI_API_KEY`
-- `AI_MODEL`
-
-Common optional values:
-
-- `HOST_PORT`: Compose host port, defaults to `3000`
-- `PORT`: app port for non-Compose containers, defaults to `3000`
-- `REDIS_URL`: defaults to `redis://localhost:6379`
-- `LOG_LEVEL`: defaults to `info`
-- `MAX_COMMENTS`: defaults to `10`
-- `WEBHOOK_MAX_BODY_BYTES`: defaults to `5000000`
-- `AI_REQUEST_TIMEOUT_MS`: defaults to `60000`
-- `GITHUB_REQUEST_TIMEOUT_MS`: defaults to `20000`
-- `SKIP_PATTERNS`: comma-separated minimatch patterns for files to skip
-- `REPLY_REQUIRE_MENTION`: defaults to `true`
+```bash
+cp .env.example .env.production
+```
 
 The container exposes `GET /health` and `GET /ready` on port `3000`. Docker health checks use `GET /ready`.

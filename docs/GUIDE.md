@@ -31,25 +31,21 @@ After creating the app, generate a private key and install the app on the reposi
 
 Install dependencies:
 
-`bun install`
+```bash
+bun install
+```
 
-Set the required env vars:
+Copy `.env.example` to `.env` and fill in the required values:
 
-`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`
-
-Common optional env vars:
-
-- `REDIS_URL`: defaults to `redis://localhost:6379`
-- `PORT`: defaults to `3000`
-- `WEBHOOK_MAX_BODY_BYTES`: defaults to `5000000`
-- `AI_REQUEST_TIMEOUT_MS`: defaults to `60000`
-- `GITHUB_REQUEST_TIMEOUT_MS`: defaults to `20000`
-- `SKIP_PATTERNS`: comma-separated minimatch patterns for files to skip
-- `REPLY_REQUIRE_MENTION`: defaults to `true`
+```bash
+cp .env.example .env
+```
 
 Start the app:
 
-`bun dev`
+```bash
+bun dev
+```
 
 ## Docker
 

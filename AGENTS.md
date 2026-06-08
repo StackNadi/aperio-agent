@@ -27,7 +27,6 @@
 - `src/review-orchestrator/` - BullMQ worker, chunking, AI pipeline
 - `src/diff-parser/` - unified diff parsing, line extraction
 - `src/utils/` - shared utilities, Redis client, types
-- `docs/plans/` - implementation plans
 - `docs/specs/` - feature and coding specifications
 - `tests/` - test files (mirror src/ structure)
 
