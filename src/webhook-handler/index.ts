@@ -1,7 +1,9 @@
 import type { Logger } from 'pino';
+import { ZodError, z } from 'zod';
 import {
   createReplyHandler,
   type ReplyHandler,
+  type ReplyHandlerConfig,
   type ReviewCommentMetadata,
 } from '../reply-handler/index';
 import {
@@ -21,6 +23,17 @@ const VALID_ACTIONS = ['opened', 'synchronize', 'reopened'] as const;
 
 const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 5_000_000;
 
+const webhookActionSchema = z.object({
+  action: z.string().min(1),
+});
+
+const pullRequestDraftSchema = z.object({
+  pull_request: z.object({
+    draft: z.boolean(),
+    number: z.number().int().positive().optional(),
+  }),
+});
+
 interface ReviewQueueLike {
   add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown>;
 }
@@ -35,6 +48,8 @@ export interface WebhookHandlerOptions {
   maxBodyBytes?: number;
   /** Queue implementation used for review and reply jobs */
   reviewQueue?: ReviewQueueLike;
+  /** Validated reply handler configuration */
+  replyConfig?: Partial<ReplyHandlerConfig>;
   /** Checks whether a delivery ID was already accepted */
   hasDeliveryProcessed?: (deliveryId: string) => Promise<boolean>;
   /** Marks a delivery ID as accepted */
@@ -102,7 +117,13 @@ export async function webhookHandler(
       }
     }
 
-    const payload = JSON.parse(rawBody);
+    const payloadResult = parseWebhookJson(rawBody, logger);
+
+    if (payloadResult instanceof Response) {
+      return payloadResult;
+    }
+
+    const payload = payloadResult;
     const event = req.headers.get('x-github-event');
     const response = await routeWebhookEvent(payload, event, logger, options);
 
@@ -147,20 +168,32 @@ async function handlePullRequestEvent(
   logger: Logger,
   options: WebhookHandlerOptions,
 ): Promise<Response> {
-  const action = payload.action as string;
+  const actionResult = webhookActionSchema.safeParse(payload);
+
+  if (!actionResult.success) {
+    return invalidWebhookPayloadResponse('pull_request', actionResult.error, logger);
+  }
+
+  const action = actionResult.data.action;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     logger.debug({ action }, 'Ignoring pull_request action');
     return new Response('OK', { status: 200 });
   }
 
-  const pullRequest = payload.pull_request as Record<string, unknown> | undefined;
-  if (pullRequest?.draft) {
-    logger.info({ pr: pullRequest.number }, 'Skipping draft PR');
+  const draftResult = pullRequestDraftSchema.safeParse(payload);
+  if (draftResult.success && draftResult.data.pull_request.draft) {
+    logger.info({ pr: draftResult.data.pull_request.number }, 'Skipping draft PR');
     return new Response('OK', { status: 200 });
   }
 
-  const prMetadata = parsePullRequestPayload(payload);
+  const prMetadataResult = parsePayloadSafely(() => parsePullRequestPayload(payload));
+
+  if (!prMetadataResult.success) {
+    return invalidWebhookPayloadResponse('pull_request', prMetadataResult.error, logger);
+  }
+
+  const prMetadata = prMetadataResult.data;
   logger.info(prMetadata, 'PR metadata extracted');
 
   const jobId = `pr-${prMetadata.owner}-${prMetadata.repo}-${prMetadata.prNumber}-${prMetadata.headSha}`;
@@ -184,15 +217,33 @@ async function handleReviewCommentEvent(
   logger: Logger,
   options: WebhookHandlerOptions,
 ): Promise<Response> {
-  const replyHandler = createReplyHandler(logger);
-  const action = payload.action as string;
+  const replyHandler = createReplyHandler(logger, options.replyConfig);
+  const actionResult = webhookActionSchema.safeParse(payload);
+
+  if (!actionResult.success) {
+    return invalidWebhookPayloadResponse('pull_request_review_comment', actionResult.error, logger);
+  }
+
+  const action = actionResult.data.action;
 
   if (action !== 'created') {
     logger.debug({ action }, 'Ignoring review comment action');
     return new Response('OK', { status: 200 });
   }
 
-  const commentMetadata = replyHandler.parseReviewCommentPayload(payload);
+  const commentMetadataResult = parsePayloadSafely(() =>
+    replyHandler.parseReviewCommentPayload(payload),
+  );
+
+  if (!commentMetadataResult.success) {
+    return invalidWebhookPayloadResponse(
+      'pull_request_review_comment',
+      commentMetadataResult.error,
+      logger,
+    );
+  }
+
+  const commentMetadata = commentMetadataResult.data;
 
   return await enqueueReplyJob(commentMetadata, replyHandler, logger, options);
 }
@@ -205,15 +256,29 @@ async function handleIssueCommentEvent(
   logger: Logger,
   options: WebhookHandlerOptions,
 ): Promise<Response> {
-  const replyHandler = createReplyHandler(logger);
-  const action = payload.action as string;
+  const replyHandler = createReplyHandler(logger, options.replyConfig);
+  const actionResult = webhookActionSchema.safeParse(payload);
+
+  if (!actionResult.success) {
+    return invalidWebhookPayloadResponse('issue_comment', actionResult.error, logger);
+  }
+
+  const action = actionResult.data.action;
 
   if (action !== 'created') {
     logger.debug({ action }, 'Ignoring issue comment action');
     return new Response('OK', { status: 200 });
   }
 
-  const commentMetadata = replyHandler.parseIssueCommentPayload(payload);
+  const commentMetadataResult = parsePayloadSafely(() =>
+    replyHandler.parseIssueCommentPayload(payload),
+  );
+
+  if (!commentMetadataResult.success) {
+    return invalidWebhookPayloadResponse('issue_comment', commentMetadataResult.error, logger);
+  }
+
+  const commentMetadata = commentMetadataResult.data;
 
   if (!commentMetadata) {
     logger.debug('Ignoring non-PR issue comment');
@@ -285,6 +350,50 @@ function getMaxBodyBytes(options: WebhookHandlerOptions): number {
   }
 
   return DEFAULT_WEBHOOK_MAX_BODY_BYTES;
+}
+
+type PayloadParseResult<T> = { success: true; data: T } | { success: false; error: unknown };
+
+function parsePayloadSafely<T>(parse: () => T): PayloadParseResult<T> {
+  try {
+    return { success: true, data: parse() };
+  } catch (error) {
+    return { success: false, error };
+  }
+}
+
+function invalidWebhookPayloadResponse(event: string, error: unknown, logger: Logger): Response {
+  logger.warn(
+    {
+      event,
+      validationIssueCount: error instanceof ZodError ? error.issues.length : undefined,
+    },
+    'Invalid webhook payload',
+  );
+
+  return new Response('Invalid payload', { status: 400 });
+}
+
+function parseWebhookJson(rawBody: string, logger: Logger): Record<string, unknown> | Response {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    logger.warn('Invalid webhook JSON');
+    return new Response('Invalid JSON', { status: 400 });
+  }
+
+  if (!isRecord(payload)) {
+    logger.warn('Webhook payload must be a JSON object');
+    return new Response('Invalid payload', { status: 400 });
+  }
+
+  return payload;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function readWebhookBody(req: Request, maxBodyBytes: number): Promise<string | Response> {

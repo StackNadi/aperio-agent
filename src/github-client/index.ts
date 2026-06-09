@@ -337,17 +337,14 @@ export class GitHubClient {
       } catch (error) {
         const statusCode = (error as { status?: number }).status;
         const errorMessage = (error as { message?: string }).message ?? 'Unknown error';
-        const responseData = (error as { response?: { data?: unknown } }).response?.data;
 
         this.logger.warn(
           {
             statusCode,
             errorMessage,
-            responseData,
             path: comment.path,
             line: comment.line,
             side: comment.side,
-            bodyPreview: comment.body.substring(0, 100),
           },
           'Skipped invalid comment',
         );

@@ -26,6 +26,10 @@ describe('loadRuntimeConfig', () => {
     expect(config.webhookMaxBodyBytes).toBe(5_000_000);
     expect(config.aiRequestTimeoutMs).toBe(60_000);
     expect(config.githubRequestTimeoutMs).toBe(20_000);
+    expect(config.aiContextWindowTokens).toBe(128_000);
+    expect(config.replyConfig.maxRepliesPerPr).toBe(5);
+    expect(config.replyConfig.delaySeconds).toBe(30);
+    expect(config.replyConfig.requireMention).toBe(true);
   });
 
   it('should fail when AI_MODEL is missing', () => {
@@ -43,6 +47,37 @@ describe('loadRuntimeConfig', () => {
   it('should fail when timeout values are invalid', () => {
     expect(() => loadRuntimeConfig({ ...validEnv, AI_REQUEST_TIMEOUT_MS: '0' })).toThrow(
       'AI_REQUEST_TIMEOUT_MS must be an integer between 1000 and 300000',
+    );
+  });
+
+  it('should load validated review and reply env vars', () => {
+    const config = loadRuntimeConfig({
+      ...validEnv,
+      AI_CONTEXT_WINDOW_TOKENS: '200000',
+      REPLY_ENABLED: 'false',
+      REPLY_MAX_PER_PR: '10',
+      REPLY_DELAY_SECONDS: '5',
+      REPLY_SKIP_BOTS: 'false',
+      REPLY_ONLY_COLLABORATORS: 'false',
+      REPLY_REQUIRE_MENTION: 'false',
+    });
+
+    expect(config.aiContextWindowTokens).toBe(200_000);
+    expect(config.replyConfig.isEnabled).toBe(false);
+    expect(config.replyConfig.maxRepliesPerPr).toBe(10);
+    expect(config.replyConfig.delaySeconds).toBe(5);
+    expect(config.replyConfig.skipBots).toBe(false);
+    expect(config.replyConfig.onlyCollaborators).toBe(false);
+    expect(config.replyConfig.requireMention).toBe(false);
+  });
+
+  it('should fail when reply env vars are invalid', () => {
+    expect(() => loadRuntimeConfig({ ...validEnv, REPLY_ENABLED: 'maybe' })).toThrow(
+      'REPLY_ENABLED must be true or false',
+    );
+
+    expect(() => loadRuntimeConfig({ ...validEnv, REPLY_MAX_PER_PR: '0' })).toThrow(
+      'REPLY_MAX_PER_PR must be an integer between 1 and 100',
     );
   });
 });

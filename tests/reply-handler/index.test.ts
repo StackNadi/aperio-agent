@@ -54,6 +54,16 @@ describe('ReplyHandler', () => {
 
       expect(replyHandler.parseIssueCommentPayload(payload)).toBeNull();
     });
+
+    it('should reject malformed issue comment payloads', () => {
+      expect(() => replyHandler.parseIssueCommentPayload({ action: 'created' })).toThrow();
+    });
+  });
+
+  describe('parseReviewCommentPayload', () => {
+    it('should reject malformed review comment payloads', () => {
+      expect(() => replyHandler.parseReviewCommentPayload({ action: 'created' })).toThrow();
+    });
   });
 
   describe('shouldProcessComment', () => {

@@ -1,6 +1,6 @@
 # Docker
 
-## Pre-built image
+## Prebuilt image
 
 ```bash
 docker pull ghcr.io/StackNadi/aperio-agent:latest
@@ -79,6 +79,8 @@ The production Compose file starts the app image and maps `${HOST_PORT:-3000}:30
 
 The production service loads environment variables from `${APERIO_ENV_FILE:-.env.production}`.
 
+Set `REDIS_URL` in the selected env file. Use an external Redis endpoint for managed Redis. Use `redis://redis:6379` only with the local Redis profile below.
+
 Start production with the local Redis service:
 
 ```bash
@@ -101,7 +103,7 @@ docker compose -f docker-compose.prod.yml down
 
 ## Configuration
 
-Copy `.env.example` to `.env.production` and fill in the required values. All available variables and their defaults are documented in that file.
+Copy `.env.example` to `.env.production` and fill in the required values. That file lists the available variables and defaults.
 
 ```bash
 cp .env.example .env.production

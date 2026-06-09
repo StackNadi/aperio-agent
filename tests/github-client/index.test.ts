@@ -7,9 +7,7 @@ function createMockOctokit(): Record<string, unknown> {
   return {
     apps: {
       getRepoInstallation: mock(() => Promise.resolve({ data: { id: 123 } })),
-      createInstallationAccessToken: mock(() =>
-        Promise.resolve({ data: { token: 'ghs_test' } }),
-      ),
+      createInstallationAccessToken: mock(() => Promise.resolve({ data: { token: 'ghs_test' } })),
     },
     pulls: {
       listFiles: mock(() => Promise.resolve({ data: [] })),
@@ -53,9 +51,7 @@ mock.module('@octokit/auth-app', () => ({ createAppAuth: mock(() => ({})) }));
 
 const { GitHubClient } = await import('../../src/github-client/index');
 
-function createRateLimitHeaders(
-  overrides: Record<string, string> = {},
-): Record<string, string> {
+function createRateLimitHeaders(overrides: Record<string, string> = {}): Record<string, string> {
   return {
     'x-ratelimit-remaining': '0',
     'x-ratelimit-reset': String(Math.floor(Date.now() / 1000)),

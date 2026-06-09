@@ -3,6 +3,8 @@ import {
   formatReviewComment,
   getSeverityBadge,
   parsePullRequestPayload,
+  parseRedisConnectionOptions,
+  redactRedisUrl,
   verifyWebhookSignature,
 } from '../../src/utils/index';
 
@@ -101,6 +103,54 @@ describe('parsePullRequestPayload', () => {
     const result = parsePullRequestPayload(payload);
     expect(result.action).toBe('synchronize');
     expect(result.prNumber).toBe(100);
+  });
+
+  it('should reject malformed pull request payloads', () => {
+    expect(() => parsePullRequestPayload({ action: 'opened' })).toThrow();
+  });
+});
+
+describe('redactRedisUrl', () => {
+  it('should remove credentials and database paths from Redis URLs', () => {
+    const result = redactRedisUrl('rediss://user:password@redis.example.com:6380/3');
+
+    expect(result).toBe('rediss://redis.example.com:6380');
+  });
+
+  it('should avoid logging malformed Redis URLs', () => {
+    expect(redactRedisUrl('not a url')).toBe('[invalid redis url]');
+  });
+});
+
+describe('parseRedisConnectionOptions', () => {
+  it('should parse Docker Compose Redis service URLs', () => {
+    const result = parseRedisConnectionOptions('redis://redis:6379');
+
+    expect(result.host).toBe('redis');
+    expect(result.port).toBe(6379);
+    expect(result.maxRetriesPerRequest).toBeNull();
+  });
+
+  it('should parse credentials and database numbers', () => {
+    const result = parseRedisConnectionOptions('redis://user:pass@redis.example.com:6380/3');
+
+    expect(result.host).toBe('redis.example.com');
+    expect(result.port).toBe(6380);
+    expect(result.username).toBe('user');
+    expect(result.password).toBe('pass');
+    expect(result.db).toBe(3);
+  });
+
+  it('should enable TLS for rediss URLs', () => {
+    const result = parseRedisConnectionOptions('rediss://redis.example.com');
+
+    expect(result.host).toBe('redis.example.com');
+    expect(result.port).toBe(6379);
+    expect(result.tls).toEqual({});
+  });
+
+  it('should reject malformed Redis URLs', () => {
+    expect(() => parseRedisConnectionOptions('not a url')).toThrow('REDIS_URL must be a valid URL');
   });
 });
 

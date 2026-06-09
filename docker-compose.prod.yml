@@ -8,7 +8,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
-      REDIS_URL: redis://redis:6379
     depends_on:
       redis:
         condition: service_healthy

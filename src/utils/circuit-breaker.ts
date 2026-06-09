@@ -37,8 +37,7 @@ export function createCircuitBreaker<TI extends unknown[], TR>(
   const errorThresholdPercentage =
     Number(process.env.CIRCUIT_BREAKER_THRESHOLD) || DEFAULT_ERROR_THRESHOLD_PERCENTAGE;
   const resetTimeout = Number(process.env.CIRCUIT_BREAKER_RESET_MS) || DEFAULT_RESET_TIMEOUT_MS;
-  const volumeThreshold =
-    Number(process.env.CIRCUIT_BREAKER_VOLUME) || DEFAULT_VOLUME_THRESHOLD;
+  const volumeThreshold = Number(process.env.CIRCUIT_BREAKER_VOLUME) || DEFAULT_VOLUME_THRESHOLD;
 
   const breaker = new CircuitBreaker(fn, {
     timeout: false,

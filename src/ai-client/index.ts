@@ -47,11 +47,13 @@ const DEFAULT_AI_TIMEOUT_MS = 60_000;
 
 class AiApiError extends Error {
   statusCode: number;
+  responseBodyLength: number;
 
   constructor(statusCode: number, body: string) {
-    super(`AI API error: ${statusCode} - ${body}`);
+    super(`AI API error: ${statusCode}`);
     this.name = 'AiApiError';
     this.statusCode = statusCode;
+    this.responseBodyLength = body.length;
   }
 }
 
@@ -278,7 +280,7 @@ Response (JSON only, no markdown):`;
       const parsed = JSON.parse(jsonStr);
       return reviewResponseSchema.parse(parsed);
     } catch (error) {
-      this.logger.error({ error, response }, 'Failed to parse AI response');
+      this.logger.error({ error, responseLength: response.length }, 'Failed to parse AI response');
       throw new Error('Invalid AI response format');
     }
   }

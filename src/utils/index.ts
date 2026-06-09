@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
-import Redis from 'ioredis';
+import Redis, { type RedisOptions } from 'ioredis';
+import { z } from 'zod';
 
 /**
  * Metadata extracted from a GitHub pull request webhook payload.
@@ -47,6 +48,22 @@ const SEVERITY_BADGES: Record<Severity, string> = {
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379';
 
+const pullRequestPayloadSchema = z.object({
+  action: z.string().min(1),
+  repository: z.object({
+    name: z.string().min(1),
+    owner: z.object({
+      login: z.string().min(1),
+    }),
+  }),
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    head: z.object({
+      sha: z.string().min(1),
+    }),
+  }),
+});
+
 /** TTL for webhook delivery ID tracking (24 hours in seconds) */
 const DELIVERY_ID_TTL = 86400;
 
@@ -61,6 +78,70 @@ const REPLY_RATE_LIMIT_TTL = 3600;
  */
 function getRedisUrl(): string {
   return process.env.REDIS_URL ?? DEFAULT_REDIS_URL;
+}
+
+/**
+ * Returns a Redis URL summary without credentials or database path.
+ *
+ * @param redisUrl - Full Redis connection URL
+ * @returns Safe URL summary for logs
+ */
+export function redactRedisUrl(redisUrl: string): string {
+  try {
+    const parsedUrl = new URL(redisUrl);
+    const port = parsedUrl.port ? `:${parsedUrl.port}` : '';
+    return `${parsedUrl.protocol}//${parsedUrl.hostname}${port}`;
+  } catch {
+    return '[invalid redis url]';
+  }
+}
+
+/**
+ * Converts a Redis URL into ioredis options for BullMQ.
+ *
+ * @param redisUrl - Full Redis connection URL
+ * @returns Redis connection options compatible with BullMQ
+ * @throws {Error} If the Redis URL is malformed
+ */
+export function parseRedisConnectionOptions(redisUrl: string): RedisOptions {
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(redisUrl);
+  } catch {
+    throw new Error('REDIS_URL must be a valid URL');
+  }
+
+  const database = parsedUrl.pathname.replace(/^\//, '');
+  const options: RedisOptions = {
+    host: parsedUrl.hostname,
+    port: parsedUrl.port ? Number(parsedUrl.port) : 6379,
+    maxRetriesPerRequest: null,
+  };
+
+  if (parsedUrl.username) {
+    options.username = decodeURIComponent(parsedUrl.username);
+  }
+
+  if (parsedUrl.password) {
+    options.password = decodeURIComponent(parsedUrl.password);
+  }
+
+  if (database) {
+    const db = Number(database);
+
+    if (!Number.isInteger(db) || db < 0) {
+      throw new Error('REDIS_URL database must be a non-negative integer');
+    }
+
+    options.db = db;
+  }
+
+  if (parsedUrl.protocol === 'rediss:') {
+    options.tls = {};
+  }
+
+  return options;
 }
 
 /**
@@ -99,9 +180,7 @@ let _reviewQueue: Queue | null = null;
 export function getReviewQueue(): Queue {
   if (!_reviewQueue) {
     _reviewQueue = new Queue('pr-review', {
-      connection: {
-        url: getRedisUrl(),
-      },
+      connection: parseRedisConnectionOptions(getRedisUrl()),
     });
   }
   return _reviewQueue;
@@ -239,18 +318,14 @@ function timingSafeEqual(a: string, b: string): boolean {
  * @throws {Error} If required fields are missing from payload
  */
 export function parsePullRequestPayload(payload: unknown): PullRequestMetadata {
-  const data = payload as Record<string, unknown>;
-  const repository = data.repository as Record<string, unknown>;
-  const owner = repository.owner as Record<string, unknown>;
-  const pullRequest = data.pull_request as Record<string, unknown>;
-  const head = pullRequest.head as Record<string, unknown>;
+  const data = pullRequestPayloadSchema.parse(payload);
 
   return {
-    owner: owner.login as string,
-    repo: repository.name as string,
-    prNumber: pullRequest.number as number,
-    headSha: head.sha as string,
-    action: data.action as string,
+    owner: data.repository.owner.login,
+    repo: data.repository.name,
+    prNumber: data.pull_request.number,
+    headSha: data.pull_request.head.sha,
+    action: data.action,
   };
 }
 

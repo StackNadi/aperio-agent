@@ -9,13 +9,17 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 const runtimeConfig = loadRuntimeConfig();
 
-const logger = pino({
-  level: process.env.LOG_LEVEL ?? 'info',
-  transport: {
-    target: 'pino-pretty',
-    options: { colorize: true },
-  },
-});
+const logger = pino(
+  process.env.NODE_ENV === 'production'
+    ? { level: process.env.LOG_LEVEL ?? 'info' }
+    : {
+        level: process.env.LOG_LEVEL ?? 'info',
+        transport: {
+          target: 'pino-pretty',
+          options: { colorize: true },
+        },
+      },
+);
 
 /** BullMQ worker that processes PR review jobs asynchronously */
 const worker = createReviewWorker(logger, runtimeConfig);
@@ -52,6 +56,7 @@ const server = serve({
       return webhookHandler(req, logger, {
         webhookSecret: runtimeConfig.githubWebhookSecret,
         maxBodyBytes: runtimeConfig.webhookMaxBodyBytes,
+        replyConfig: runtimeConfig.replyConfig,
       });
     }
 

@@ -211,22 +211,22 @@ describe('ReviewOrchestrator helpers', () => {
 
 function createMockGitHubClient() {
   return {
-    hasReviewMarker: mock<(prNumber: number, commitSha?: string) => Promise<boolean>>(
-      () => Promise.resolve(false),
+    hasReviewMarker: mock<(prNumber: number, commitSha?: string) => Promise<boolean>>(() =>
+      Promise.resolve(false),
     ),
-    fetchPullRequestFiles: mock<(prNumber: number) => Promise<unknown[]>>(
-      () => Promise.resolve([]),
+    fetchPullRequestFiles: mock<(prNumber: number) => Promise<unknown[]>>(() =>
+      Promise.resolve([]),
     ),
-    postReview: mock<
-      (prNumber: number, commitSha: string, comments: unknown[]) => Promise<void>
-    >(() => Promise.resolve()),
+    postReview: mock<(prNumber: number, commitSha: string, comments: unknown[]) => Promise<void>>(
+      () => Promise.resolve(),
+    ),
   };
 }
 
 function createMockAiClient() {
   return {
-    reviewDiff: mock<(diff: string, filePath: string) => Promise<unknown[]>>(
-      () => Promise.resolve([]),
+    reviewDiff: mock<(diff: string, filePath: string) => Promise<unknown[]>>(() =>
+      Promise.resolve([]),
     ),
   };
 }
@@ -246,7 +246,9 @@ describe('ReviewOrchestrator.processReview', () => {
     github.hasReviewMarker.mockImplementation(() => Promise.resolve(true));
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -262,13 +264,13 @@ describe('ReviewOrchestrator.processReview', () => {
     const github = createMockGitHubClient();
     const ai = createMockAiClient();
     github.fetchPullRequestFiles.mockImplementation(() =>
-      Promise.resolve([
-        { filename: 'README.md', status: 'removed', patch: '' },
-      ]),
+      Promise.resolve([{ filename: 'README.md', status: 'removed', patch: '' }]),
     );
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -304,7 +306,9 @@ describe('ReviewOrchestrator.processReview', () => {
     );
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -319,6 +323,75 @@ describe('ReviewOrchestrator.processReview', () => {
     }>;
     expect(postedComments.length).toBeGreaterThan(0);
     expect(postedComments[0]?.path).toBe('src/index.ts');
+  });
+
+  it('should drop AI comments for a different file path', async () => {
+    const github = createMockGitHubClient();
+    const ai = createMockAiClient();
+
+    github.fetchPullRequestFiles.mockImplementation(() =>
+      Promise.resolve([
+        {
+          filename: 'src/index.ts',
+          status: 'modified',
+          patch: '@@ -1,3 +1,4 @@\n const a = 1;\n+const b = 2;\n const c = 3;',
+        },
+      ]),
+    );
+
+    ai.reviewDiff.mockImplementation(() =>
+      Promise.resolve([
+        {
+          file: 'src/other.ts',
+          line: 2,
+          severity: 'warning' as const,
+          comment: 'This should not be posted',
+        },
+      ]),
+    );
+
+    const orchestrator = new ReviewOrchestrator(
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
+      ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
+      logger,
+    );
+
+    await orchestrator.processReview(metadata);
+
+    expect(github.postReview).toHaveBeenCalledWith(42, 'abc123', []);
+  });
+
+  it('should skip file diffs that exceed the context input budget', async () => {
+    const github = createMockGitHubClient();
+    const ai = createMockAiClient();
+    const largeAddedLine = `const value = '${'x'.repeat(400)}';`;
+
+    github.fetchPullRequestFiles.mockImplementation(() =>
+      Promise.resolve([
+        {
+          filename: 'src/index.ts',
+          status: 'modified',
+          patch: `@@ -1,1 +1,2 @@\n const a = 1;\n+${largeAddedLine}`,
+        },
+      ]),
+    );
+
+    const orchestrator = new ReviewOrchestrator(
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
+      ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
+      logger,
+      10,
+      64,
+    );
+
+    await orchestrator.processReview(metadata);
+
+    expect(ai.reviewDiff).not.toHaveBeenCalled();
+    expect(github.postReview).toHaveBeenCalledWith(42, 'abc123', []);
   });
 
   it('should post empty review when AI returns no findings', async () => {
@@ -338,7 +411,9 @@ describe('ReviewOrchestrator.processReview', () => {
     ai.reviewDiff.mockImplementation(() => Promise.resolve([]));
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -370,7 +445,9 @@ describe('ReviewOrchestrator.processReview', () => {
     ai.reviewDiff.mockImplementation(() => Promise.reject(new Error('AI API down')));
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -416,7 +493,9 @@ describe('ReviewOrchestrator.processReview', () => {
     });
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
     );
@@ -435,8 +514,7 @@ describe('ReviewOrchestrator.processReview', () => {
         {
           filename: 'src/index.ts',
           status: 'modified',
-          patch:
-            '@@ -1,10 +1,12 @@\n a\n+b\n c\n+d\n e\n+f\n g\n+h\n i\n+j\n k\n+l',
+          patch: '@@ -1,10 +1,12 @@\n a\n+b\n c\n+d\n e\n+f\n g\n+h\n i\n+j\n k\n+l',
         },
       ]),
     );
@@ -453,7 +531,9 @@ describe('ReviewOrchestrator.processReview', () => {
     );
 
     const orchestrator = new ReviewOrchestrator(
-      github as unknown as InstanceType<typeof import('../../src/github-client/index').GitHubClient>,
+      github as unknown as InstanceType<
+        typeof import('../../src/github-client/index').GitHubClient
+      >,
       ai as unknown as InstanceType<typeof import('../../src/ai-client/index').AiClient>,
       logger,
       3,

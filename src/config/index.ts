@@ -1,3 +1,5 @@
+import type { ReplyHandlerConfig } from '../reply-handler/index';
+
 /**
  * Runtime configuration validated at process startup.
  */
@@ -26,6 +28,10 @@ export interface RuntimeConfig {
   aiRequestTimeoutMs: number;
   /** GitHub API request timeout in milliseconds */
   githubRequestTimeoutMs: number;
+  /** Minimum model context window available for review prompts */
+  aiContextWindowTokens: number;
+  /** Reply handler behavior validated at startup */
+  replyConfig: ReplyHandlerConfig;
 }
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379';
@@ -34,6 +40,9 @@ const DEFAULT_MAX_COMMENTS = 10;
 const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 5_000_000;
 const DEFAULT_AI_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 20_000;
+const DEFAULT_AI_CONTEXT_WINDOW_TOKENS = 128_000;
+const DEFAULT_REPLY_MAX_PER_PR = 5;
+const DEFAULT_REPLY_DELAY_SECONDS = 30;
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -76,6 +85,31 @@ export function loadRuntimeConfig(env: EnvSource = process.env): RuntimeConfig {
       1_000,
       300_000,
     ),
+    aiContextWindowTokens: parseIntegerEnv(
+      env,
+      'AI_CONTEXT_WINDOW_TOKENS',
+      DEFAULT_AI_CONTEXT_WINDOW_TOKENS,
+      16_000,
+      2_000_000,
+    ),
+    replyConfig: parseReplyConfig(env),
+  };
+}
+
+function parseReplyConfig(env: EnvSource): ReplyHandlerConfig {
+  return {
+    isEnabled: parseBooleanEnv(env, 'REPLY_ENABLED', true),
+    maxRepliesPerPr: parseIntegerEnv(env, 'REPLY_MAX_PER_PR', DEFAULT_REPLY_MAX_PER_PR, 1, 100),
+    delaySeconds: parseIntegerEnv(
+      env,
+      'REPLY_DELAY_SECONDS',
+      DEFAULT_REPLY_DELAY_SECONDS,
+      0,
+      3_600,
+    ),
+    skipBots: parseBooleanEnv(env, 'REPLY_SKIP_BOTS', true),
+    onlyCollaborators: parseBooleanEnv(env, 'REPLY_ONLY_COLLABORATORS', true),
+    requireMention: parseBooleanEnv(env, 'REPLY_REQUIRE_MENTION', true),
   };
 }
 
@@ -150,4 +184,24 @@ function parseIntegerEnv(
   }
 
   return value;
+}
+
+function parseBooleanEnv(env: EnvSource, name: string, defaultValue: boolean): boolean {
+  const rawValue = env[name];
+
+  if (rawValue === undefined || rawValue.trim() === '') {
+    return defaultValue;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+
+  if (normalizedValue === 'true') {
+    return true;
+  }
+
+  if (normalizedValue === 'false') {
+    return false;
+  }
+
+  throw new Error(`${name} must be true or false`);
 }

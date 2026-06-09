@@ -10,19 +10,32 @@ import {
   shouldSkipFile,
 } from '../diff-parser/index';
 import { GitHubClient, type ReviewComment } from '../github-client/index';
-import type { ReviewCommentMetadata } from '../reply-handler/index';
+import { createReplyHandler, type ReviewCommentMetadata } from '../reply-handler/index';
 import {
   clearReplyProcessed,
   formatReviewComment,
   isReplyRateLimitExceeded,
   type PullRequestMetadata,
+  parseRedisConnectionOptions,
+  redactRedisUrl,
 } from '../utils/index';
 
-/** Threshold in tokens before splitting files into separate AI calls */
-const CONTEXT_WINDOW_TOKENS = 800_000;
+/** Minimum supported model context window for review prompts. */
+const DEFAULT_AI_CONTEXT_WINDOW_TOKENS = 128_000;
+
+/** Fraction of the model context reserved for diff input. */
+const AI_INPUT_TOKEN_BUDGET_RATIO = 0.7;
 
 /** Chars-per-token estimation for chunk size calculation */
 const CHARS_PER_TOKEN = 4;
+
+function calculateInputTokenBudget(aiContextWindowTokens: number): number {
+  return Math.floor(aiContextWindowTokens * AI_INPUT_TOKEN_BUDGET_RATIO);
+}
+
+function estimateTokenCount(content: string): number {
+  return Math.ceil(content.length / CHARS_PER_TOKEN);
+}
 
 /**
  * Parsed file data ready for AI review.
@@ -72,12 +85,20 @@ export class ReviewOrchestrator {
   private aiClient: AiClient;
   private logger: Logger;
   private maxComments: number;
+  private maxDiffTokensPerRequest: number;
 
-  constructor(githubClient: GitHubClient, aiClient: AiClient, logger: Logger, maxComments = 10) {
+  constructor(
+    githubClient: GitHubClient,
+    aiClient: AiClient,
+    logger: Logger,
+    maxComments = 10,
+    aiContextWindowTokens = DEFAULT_AI_CONTEXT_WINDOW_TOKENS,
+  ) {
     this.githubClient = githubClient;
     this.aiClient = aiClient;
     this.logger = logger;
     this.maxComments = maxComments;
+    this.maxDiffTokensPerRequest = calculateInputTokenBudget(aiContextWindowTokens);
   }
 
   /**
@@ -178,9 +199,20 @@ export class ReviewOrchestrator {
         continue;
       }
 
+      const formattedDiff = formatDiffForAi(diffHunk);
+      const diffTokens = estimateTokenCount(formattedDiff);
+
+      if (diffTokens > this.maxDiffTokensPerRequest) {
+        this.logger.warn(
+          { filePath, diffTokens, maxDiffTokens: this.maxDiffTokensPerRequest },
+          'Skipping oversized file diff',
+        );
+        continue;
+      }
+
       result.push({
         filePath,
-        diff: formatDiffForAi(diffHunk),
+        diff: formattedDiff,
         addedLines,
       });
     }
@@ -199,9 +231,12 @@ export class ReviewOrchestrator {
     let currentTokenCount = 0;
 
     for (const file of files) {
-      const fileTokens = Math.ceil(file.diff.length / CHARS_PER_TOKEN);
+      const fileTokens = estimateTokenCount(file.diff);
 
-      if (currentTokenCount + fileTokens > CONTEXT_WINDOW_TOKENS && currentChunk.length > 0) {
+      if (
+        currentTokenCount + fileTokens > this.maxDiffTokensPerRequest &&
+        currentChunk.length > 0
+      ) {
         chunks.push(currentChunk);
         currentChunk = [];
         currentTokenCount = 0;
@@ -262,7 +297,7 @@ export class ReviewOrchestrator {
 
       try {
         const comments = await this.aiClient.reviewDiff(file.diff, file.filePath);
-        const mappedComments = this.mapLineNumbers(comments, file.addedLines);
+        const mappedComments = this.mapLineNumbers(comments, file);
         result.comments.push(...mappedComments);
       } catch (error) {
         result.failedFiles++;
@@ -279,28 +314,42 @@ export class ReviewOrchestrator {
    * Falls back to content matching if exact line number doesn't match.
    * Drops comments that can't be mapped or are outside added lines.
    */
-  private mapLineNumbers(
-    comments: AiReviewComment[],
-    addedLines: Array<{ lineNumber: number; content: string }>,
-  ): AiReviewComment[] {
+  private mapLineNumbers(comments: AiReviewComment[], file: ParsedFile): AiReviewComment[] {
+    const addedLines = file.addedLines;
     const addedLineNumbers = new Set(addedLines.map((l) => l.lineNumber));
 
     return comments
+      .filter((comment) => {
+        const isCurrentFile = comment.file === file.filePath;
+        if (!isCurrentFile) {
+          this.logger.debug(
+            { filePath: file.filePath, aiFilePath: comment.file },
+            'Dropping comment for a different file',
+          );
+        }
+        return isCurrentFile;
+      })
       .map((comment) => {
         const matchingLine = addedLines.find((line) => line.lineNumber === comment.line);
         if (matchingLine) return comment;
 
-        const contentMatch = addedLines.find((line) =>
-          comment.comment
-            .toLowerCase()
-            .includes(line.content.trim().toLowerCase().substring(0, 20)),
-        );
+        const contentMatch = addedLines.find((line) => {
+          const searchableContent = line.content.trim().toLowerCase().substring(0, 20);
+
+          return (
+            searchableContent.length > 0 &&
+            comment.comment.toLowerCase().includes(searchableContent)
+          );
+        });
 
         if (contentMatch) {
           return { ...comment, line: contentMatch.lineNumber };
         }
 
-        this.logger.debug({ comment }, 'Could not map line number');
+        this.logger.debug(
+          { filePath: file.filePath, line: comment.line },
+          'Could not map line number',
+        );
         return null;
       })
       .filter((c): c is AiReviewComment => c !== null)
@@ -364,7 +413,7 @@ export function createReviewWorker(
 ): Worker {
   const redisUrl = runtimeConfig.redisUrl;
 
-  logger.info({ redisUrl }, 'Initializing BullMQ worker');
+  logger.info({ redisUrl: redactRedisUrl(redisUrl) }, 'Initializing BullMQ worker');
 
   const aiClient = new AiClient(
     {
@@ -394,6 +443,7 @@ export function createReviewWorker(
           aiClient,
           logger,
           runtimeConfig.maxComments,
+          runtimeConfig.aiContextWindowTokens,
         );
         await orchestrator.processReview(metadata);
       } else if (job.name === 'reply-comment') {
@@ -406,11 +456,11 @@ export function createReviewWorker(
           logger,
           runtimeConfig,
         );
-        await processReplyJob(githubClient, aiClient, metadata, logger);
+        await processReplyJob(githubClient, aiClient, metadata, logger, runtimeConfig);
       }
     },
     {
-      connection: { url: redisUrl },
+      connection: parseRedisConnectionOptions(redisUrl),
       concurrency: 1,
     },
   );
@@ -447,9 +497,9 @@ async function processReplyJob(
   aiClient: AiClient,
   metadata: ReviewCommentMetadata,
   logger: Logger,
+  runtimeConfig: RuntimeConfig,
 ): Promise<void> {
-  const { createReplyHandler } = await import('../reply-handler/index');
-  const replyHandler = createReplyHandler(logger);
+  const replyHandler = createReplyHandler(logger, runtimeConfig.replyConfig);
   let hasReplyPostStarted = false;
 
   try {
