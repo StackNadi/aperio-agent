@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-10
+
+### Fixed
+
+- Parse Redis URLs into BullMQ connection options so Docker Compose service names resolve correctly.
+- Return `400` for malformed GitHub webhook payloads instead of throwing during event handling.
+- Drop AI review comments that point to a different file or to lines outside the added diff.
+- Skip file diffs that exceed the configured AI input budget.
+- Stop logging raw AI responses, GitHub error payloads, Redis credentials, and review body previews.
+
+### Changed
+
+- Set the default review context setting to `128000` tokens through `AI_CONTEXT_WINDOW_TOKENS`.
+- Validate reply handler settings through startup config.
+- Use JSON Pino logs when `NODE_ENV=production`.
+- Let production Compose read `REDIS_URL` from the selected env file.
+
+### Documentation
+
+- Document Redis setup, AI provider data flow, model context settings, and release verification commands.
+
 ## [1.0.0] - 2026-06-07
 
 ### Added
